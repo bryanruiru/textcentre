@@ -1,0 +1,27 @@
+# Environment files
+.env
+.env.local
+
+# Dependencies
+node_modules/
+
+# Build files
+dist/
+build/
+
+# IDE files
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+
+# Local development
+*.log
+
+# Supabase local files
+supabase/migrations/
+
+# Audio/book files
+/audiobooks/
+/ebooks/

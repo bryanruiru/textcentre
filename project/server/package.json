@@ -1,0 +1,19 @@
+{
+  "name": "textcentre-ai-service",
+  "version": "1.0.0",
+  "description": "AI service for TextCentre application",
+  "main": "ai-service.js",
+  "scripts": {
+    "start": "node ai-service.js",
+    "dev": "nodemon ai-service.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.21.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}

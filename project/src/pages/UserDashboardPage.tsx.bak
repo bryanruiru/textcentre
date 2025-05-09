@@ -1,0 +1,973 @@
+import React, { useState, useEffect, lazy, Suspense } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { 
+  User, 
+  BookOpen, 
+  BookMarked, 
+  Clock, 
+  Award, 
+  Settings, 
+  LogOut, 
+  Crown, 
+  BarChart3,
+  CreditCard,
+  Calendar,
+  Users,
+  Zap
+} from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useAppStore } from '../store';
+
+// Lazy load components to improve initial loading time
+const BookCard = lazy(() => import('../components/BookCard'));
+const UsageLimits = lazy(() => import('../components/UsageLimits'));
+const ReferralProgram = lazy(() => import('../components/ReferralProgram'));
+
+import { getUserProfile, upgradeToPremium, cancelSubscription, getSubscriptionPlans } from '../api';
+import { SubscriptionPlan } from '../types';
+
+interface UserDashboardPageProps {
+  activeTab?: 'overview' | 'library' | 'settings' | 'premium' | 'referrals';
+}
+
+const UserDashboardPage: React.FC<UserDashboardPageProps> = ({ activeTab = 'overview' }) => {
+  const { auth, userProfile, setUserProfile, books, logout } = useAppStore();
+  const [currentTab, setCurrentTab] = useState(activeTab);
+  const [isLoading, setIsLoading] = useState(false);
+  const [subscriptionPlans, setSubscriptionPlans] = useState<SubscriptionPlan[]>([]);
+  const [selectedPlan, setSelectedPlan] = useState('');
+  const navigate = useNavigate();
+  
+  // Fetch user profile data - optimized with debounce and caching
+  useEffect(() => {
+    let isMounted = true;
+    const fetchUserProfile = async () => {
+      if (auth.token) {
+        setIsLoading(true);
+        try {
+          // Check if we have a cached profile and it's less than 5 minutes old
+          const cachedProfile = sessionStorage.getItem('userProfile');
+          const cachedTime = sessionStorage.getItem('userProfileTime');
+          
+          if (cachedProfile && cachedTime && (Date.now() - parseInt(cachedTime)) < 300000) {
+            // Use cached profile if it's recent
+            setUserProfile(JSON.parse(cachedProfile));
+            setIsLoading(false);
+            return;
+          }
+          
+          const response = await getUserProfile(auth.token);
+          if (isMounted) {
+            setUserProfile(response.user);
+            // Cache the profile
+            sessionStorage.setItem('userProfile', JSON.stringify(response.user));
+            sessionStorage.setItem('userProfileTime', Date.now().toString());
+          }
+        } catch (error) {
+          console.error('Error fetching user profile:', error);
+        } finally {
+          if (isMounted) {
+            setIsLoading(false);
+          }
+        }
+      }
+    };
+    
+    if (!userProfile) {
+      fetchUserProfile();
+    }
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [auth.token, setUserProfile, userProfile]);
+
+  // Fetch subscription plans - optimized with caching
+  useEffect(() => {
+    let isMounted = true;
+    const fetchSubscriptionPlans = async () => {
+      try {
+        // Check if we have cached plans and they're less than 1 hour old
+        const cachedPlans = localStorage.getItem('subscriptionPlans');
+        const cachedTime = localStorage.getItem('subscriptionPlansTime');
+        
+        if (cachedPlans && cachedTime && (Date.now() - parseInt(cachedTime)) < 3600000) {
+          // Use cached plans if they're recent
+          const plans = JSON.parse(cachedPlans);
+          if (isMounted) {
+            setSubscriptionPlans(plans);
+            // Set default selected plan to the popular one or the first one
+            const popularPlan = plans.find((plan: SubscriptionPlan) => plan.is_popular);
+            setSelectedPlan(popularPlan?.id || (plans.length > 0 ? plans[0].id : ''));
+          }
+          return;
+        }
+        
+        // Only fetch plans if we're on the premium tab or if we're premium users
+        if (currentTab === 'premium' || auth.user?.isPremium) {
+          const plans = await getSubscriptionPlans();
+          if (isMounted) {
+            setSubscriptionPlans(plans);
+            
+            // Set default selected plan to the popular one or the first one
+            const popularPlan = plans.find((plan: SubscriptionPlan) => plan.is_popular);
+            setSelectedPlan(popularPlan?.id || (plans.length > 0 ? plans[0].id : ''));
+            
+            // Cache the plans
+            localStorage.setItem('subscriptionPlans', JSON.stringify(plans));
+            localStorage.setItem('subscriptionPlansTime', Date.now().toString());
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching subscription plans:', error);
+      }
+    };
+    
+    fetchSubscriptionPlans();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [currentTab, auth.user?.isPremium]);
+
+  // Update active tab when prop changes
+  useEffect(() => {
+    setCurrentTab(activeTab);
+  }, [activeTab]);
+  
+  // Mock data for demonstration
+  const recentlyReadBooks = books.filter(book => book.progress !== undefined).slice(0, 3);
+  const savedBooks = books.slice(3, 7);
+  
+  const handleUpgradeToPremium = async () => {
+    if (auth.token) {
+      setIsLoading(true);
+      try {
+        await upgradeToPremium(auth.token);
+        // Refresh user profile after upgrade
+        const response = await getUserProfile(auth.token);
+        setUserProfile(response.user);
+        toast.success('Successfully upgraded to premium!', {
+          icon: '👑',
+          duration: 5000
+        });
+      } catch (error) {
+        console.error('Error upgrading to premium:', error);
+        toast.error('Failed to upgrade to premium. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+  
+  const handleCancelSubscription = async () => {
+    if (!window.confirm('Are you sure you want to cancel your premium subscription? You will still have access until the end of your billing period.')) {
+      return;
+    }
+    
+    if (auth.token) {
+      setIsLoading(true);
+      try {
+        await cancelSubscription(auth.token);
+        // Refresh user profile after cancellation
+        const response = await getUserProfile(auth.token);
+        setUserProfile(response.user);
+        toast.success('Your subscription has been set to cancel at the end of the billing period.');
+      } catch (error) {
+        console.error('Error cancelling subscription:', error);
+        toast.error('Failed to cancel subscription. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+  
+  // Loading state with skeleton UI for better user experience
+  if (isLoading && !userProfile) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="flex flex-col md:flex-row gap-8">
+          {/* Sidebar skeleton */}
+          <div className="md:w-1/4">
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-6 animate-pulse">
+              <div className="flex items-center mb-6">
+                <div className="w-16 h-16 rounded-full bg-gray-200 dark:bg-gray-700"></div>
+                <div className="ml-4 space-y-2">
+                  <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-24"></div>
+                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-32"></div>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="h-10 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                ))}
+              </div>
+            </div>
+          </div>
+          {/* Main content skeleton */}
+          <div className="md:w-3/4">
+            <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-40 mb-6"></div>
+            <div className="grid grid-cols-2 gap-4 mb-8">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 h-24 animate-pulse">
+                  <div className="flex justify-between">
+                    <div className="space-y-2">
+                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-20"></div>
+                      <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-12"></div>
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700"></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-4">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 h-40 animate-pulse">
+                  <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-40 mb-4"></div>
+                  <div className="grid grid-cols-3 gap-4">
+                    {[...Array(3)].map((_, j) => (
+                      <div key={j} className="h-24 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="flex flex-col md:flex-row gap-8">
+        {/* Sidebar */}
+        <div className="md:w-1/4">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-6 sticky top-24">
+            {/* User info */}
+            <div className="flex items-center mb-6">
+              <div className="w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                <User size={32} />
+              </div>
+              <div className="ml-4">
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white">{auth.user?.name}</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">{auth.user?.email}</p>
+                {auth.user?.isPremium && (
+                  <div className="flex items-center mt-1 text-amber-500">
+                    <Crown size={14} className="mr-1" />
+                    <span className="text-xs font-medium">Premium Member</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            {/* Navigation */}
+            <nav className="space-y-1">
+              <button
+                onClick={() => setCurrentTab('overview')}
+                className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium ${
+                  currentTab === 'overview'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}
+              >
+                <BarChart3 size={18} className="mr-3" />
+                Overview
+              </button>
+              
+              <button
+                onClick={() => setCurrentTab('library')}
+                className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium ${
+                  currentTab === 'library'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}
+              >
+                <BookOpen size={18} className="mr-3" />
+                My Library
+              </button>
+
+              {auth.user?.isPremium && (
+                <button
+                  onClick={() => setCurrentTab('premium')}
+                  className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium ${
+                    currentTab === 'premium'
+                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                      : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  <Crown size={18} className="mr-3 text-amber-500" />
+                  Premium
+                </button>
+              )}
+              
+              <button
+                onClick={() => setCurrentTab('referrals')}
+                className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium ${
+                  currentTab === 'referrals'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}
+              >
+                <Users size={18} className="mr-3" />
+                Referrals
+              </button>
+              
+              <button
+                onClick={() => setCurrentTab('settings')}
+                className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium ${
+                  currentTab === 'settings'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}
+              >
+                <Settings size={18} className="mr-3" />
+                Settings
+              </button>
+              
+              <button 
+                onClick={handleLogout}
+                className="w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
+                <LogOut size={18} className="mr-3" />
+                Sign Out
+              </button>
+            </nav>
+            
+            {/* Premium upgrade banner (if not premium) */}
+            {!auth.user?.isPremium && (
+              <div className="mt-6 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-4 text-white">
+                <div className="flex items-center mb-2">
+                  <Crown size={18} className="mr-2 text-yellow-300" />
+                  <h3 className="font-bold">Upgrade to Premium</h3>
+                </div>
+                <p className="text-sm mb-3 text-blue-100">
+                  Unlock unlimited access to all books and exclusive features.
+                </p>
+                <button 
+                  onClick={handleUpgradeToPremium}
+                  className="w-full py-2 bg-white text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-50 transition-colors"
+                >
+                  Upgrade Now
+                </button>
+              </div>
+            )}
+        </div>
+        
+        {/* Main content */}
+        <div className="md:w-3/4">
+          {currentTab === 'overview' && (
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Dashboard</h1>
+              
+              {/* Usage Limits for free users */}
+              {!auth.user?.isPremium && <UsageLimits />}
+              
+              {/* Stats cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">Books in Library</p>
+                      <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
+                        {userProfile?.stats?.totalBooks || 12}
+                      </p>
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                      <BookMarked size={20} />
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">Books Completed</p>
+                      <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
+                        {userProfile?.stats?.completedBooks || 5}
+                      </p>
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center text-green-600 dark:text-green-400">
+                      <Award size={20} />
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">Reading Streak</p>
+                      <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">7 days</p>
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-amber-600 dark:text-amber-400">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.214.33-.403.713-.57 1.116-.334.804-.614 1.768-.84 2.734a31.365 31.365 0 00-.613 3.58 2.64 2.64 0 01-.945-1.067c-.328-.68-.398-1.534-.398-2.654A1 1 0 005.05 6.05 6.981 6.981 0 003 11a7 7 0 1011.95-4.95c-.592-.591-.98-.985-1.348-1.467-.363-.476-.724-1.063-1.207-2.03zM12.12 15.12A3 3 0 017 13s.879.5 2.5.5c0-1 .5-4 1.25-4.5.5 1 .786 1.293 1.371 1.879A2.99 2.99 0 0113 13a2.99 2.99 0 01-.879 2.121z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">Reading Time</p>
+                      <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">32 hrs</p>
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 dark:text-purple-400">
+                      <Clock size={20} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Continue Reading */}
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">Continue Reading</h2>
+                  <Link to="/library" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">
+                    View All
+                  </Link>
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {recentlyReadBooks.map((book) => (
+                    <div key={book.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4">
+                      <div className="flex">
+                        <div className="w-16 h-24 flex-shrink-0 rounded-md overflow-hidden">
+                          <img 
+                            src={book.coverImage} 
+                            alt={book.title} 
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <div className="ml-4 flex-1">
+                          <h3 className="font-medium text-gray-900 dark:text-white line-clamp-1">{book.title}</h3>
+                          <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">{book.author}</p>
+                          <div className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-blue-600" 
+                              style={{ width: `${(book.progress || 0) * 100}%` }}
+                            ></div>
+                          </div>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            {Math.round((book.progress || 0) * 100)}% complete
+                          </p>
+                        </div>
+                      </div>
+                      <Link 
+                        to={`/read/${book.id}`}
+                        className="mt-3 w-full py-2 flex items-center justify-center text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                      >
+                        Continue Reading
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              {/* Reading Activity */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 mb-8">
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Reading Activity</h2>
+                
+                <div className="h-48 flex items-end justify-between">
+                  {[...Array(7)].map((_, i) => {
+                    const height = Math.floor(Math.random() * 80) + 20;
+                    return (
+                      <div key={i} className="flex flex-col items-center">
+                        <div 
+                          className="w-8 bg-blue-600 dark:bg-blue-500 rounded-t-md" 
+                          style={{ height: `${height}%` }}
+                        ></div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i]}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              
+              {/* Saved Books */}
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">Saved for Later</h2>
+                  <Link to="/saved" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">
+                    View All
+                  </Link>
+                </div>
+                
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {savedBooks.map((book) => (
+                    <BookCard key={book.id} book={book} size="small" />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {currentTab === 'library' && (
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">My Library</h1>
+              
+              {/* Library tabs */}
+              <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
+                <nav className="flex space-x-8">
+                  <button className="py-4 px-1 border-b-2 border-blue-600 dark:border-blue-400 font-medium text-sm text-blue-600 dark:text-blue-400">
+                    All Books
+                  </button>
+                  <button className="py-4 px-1 border-b-2 border-transparent font-medium text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
+                    Currently Reading
+                  </button>
+                  <button className="py-4 px-1 border-b-2 border-transparent font-medium text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
+                    Completed
+                  </button>
+                </nav>
+              </div>
+              
+              {/* Library grid - with virtualization for better performance */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
+                <Suspense fallback={<div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
+                  {[...Array(8)].map((_, i) => (
+                    <div key={i} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 h-64 animate-pulse">
+                      <div className="h-40 bg-gray-200 dark:bg-gray-700 rounded mb-2"></div>
+                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-2"></div>
+                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
+                    </div>
+                  ))}
+                </div>}>
+                  {books.slice(0, 8).map((book) => (
+                    <BookCard key={book.id} book={book} />
+                  ))}
+                </Suspense>
+              </div>
+            </div>
+          )}
+          
+          {currentTab === 'premium' && (
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Premium Subscription</h1>
+              
+              {/* Premium Subscription Management - Lazy loaded */}
+              <Suspense fallback={<div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 mb-6 h-40 animate-pulse"></div>}>
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 mb-6">
+                {auth.user?.isPremium ? (
+                  <div>
+                    <div className="flex items-center mb-4">
+                      <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-amber-600 dark:text-amber-400 mr-3">
+                        <Crown size={20} />
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900 dark:text-white">
+                          {userProfile?.subscription?.plan_id === 'premium-annual' ? 'Premium Annual Plan' : 'Premium Monthly Plan'}
+                        </p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                          {userProfile?.subscription ? 
+                            `Your subscription ${userProfile.subscription.cancel_at_period_end ? 'will end' : 'renews'} on ${new Date(userProfile.subscription.current_period_end).toLocaleDateString()}` : 
+                            'Active subscription'}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {userProfile?.subscription?.cancel_at_period_end ? (
+                      <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 rounded-md mb-4 text-sm">
+                        Your subscription is set to cancel at the end of the current billing period. You will still have premium access until then.
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={handleCancelSubscription}
+                        disabled={isLoading}
+                        className="px-4 py-2 border border-red-600 text-red-600 font-medium rounded-md hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        {isLoading ? 'Processing...' : 'Cancel Subscription'}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <p className="text-gray-700 dark:text-gray-300 mb-4">
+                      Upgrade to Premium to unlock unlimited access to all books and exclusive features.
+                    </p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                      {subscriptionPlans.map((plan: SubscriptionPlan) => (
+                        <div 
+                          key={plan.id} 
+                          onClick={() => setSelectedPlan(plan.id)}
+                          className={`border rounded-lg p-4 cursor-pointer transition-all ${selectedPlan === plan.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700'}`}
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <h3 className="font-bold text-gray-900 dark:text-white">{plan.name}</h3>
+                              <p className="text-sm text-gray-500 dark:text-gray-400">{plan.description}</p>
+                            </div>
+                            {plan.is_popular && (
+                              <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-blue-900 dark:text-blue-300">
+                                Popular
+                              </span>
+                            )}
+                          </div>
+                          <div className="mb-2">
+                            <span className="text-2xl font-bold text-gray-900 dark:text-white">${plan.price}</span>
+                            <span className="text-gray-500 dark:text-gray-400">/{plan.interval}</span>
+                          </div>
+                          <ul className="space-y-1 mb-4 text-sm">
+                            {plan.features.map((feature: string, index: number) => (
+                              <li key={index} className="flex items-center">
+                                <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center mr-2">
+                                  <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                                <span>{feature}</span>
+                              </li>
+                            ))}
+                          </ul>
+                          <div className="flex items-center">
+                            <input 
+                              type="radio" 
+                              name="subscription-plan" 
+                              id={`plan-${plan.id}`} 
+                              checked={selectedPlan === plan.id} 
+                              onChange={() => setSelectedPlan(plan.id)} 
+                              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" 
+                            />
+                            <label htmlFor={`plan-${plan.id}`} className="ml-2 text-sm font-medium text-gray-900 dark:text-gray-300">
+                              Select plan
+                            </label>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    <button
+                      onClick={handleUpgradeToPremium}
+                      disabled={isLoading || !selectedPlan}
+                      className="w-full py-2 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-bold rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isLoading ? 'Processing...' : 'Upgrade Now'}
+                    </button>
+                  </div>
+                )}
+              </div>
+              </Suspense>
+              
+              {/* Premium Features */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 mb-6">
+                <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Premium Features</h2>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="flex">
+                    <div className="flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-md bg-blue-500 text-white">
+                      <BookOpen size={24} />
+                    </div>
+                    <div className="ml-4">
+                      <h3 className="text-lg font-medium text-gray-900 dark:text-white">Unlimited Books</h3>
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Access our entire library with no monthly limits.
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex">
+                    <div className="flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-md bg-blue-500 text-white">
+                      <Zap size={24} />
+                    </div>
+                    <div className="ml-4">
+                      <h3 className="text-lg font-medium text-gray-900 dark:text-white">AI-Powered Features</h3>
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Get personalized recommendations and AI reading assistant.
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex">
+                    <div className="flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-md bg-blue-500 text-white">
+                      <Calendar size={24} />
+                    </div>
+                    <div className="ml-4">
+                      <h3 className="text-lg font-medium text-gray-900 dark:text-white">Early Access</h3>
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Get early access to new books and features.
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex">
+                    <div className="flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-md bg-blue-500 text-white">
+                      <CreditCard size={24} />
+                    </div>
+                    <div className="ml-4">
+                      <h3 className="text-lg font-medium text-gray-900 dark:text-white">No Ads</h3>
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Enjoy an ad-free reading experience.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {currentTab === 'referrals' && (
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Referral Program</h1>
+              
+              {/* Referral Program Component */}
+              <Suspense fallback={<div className="animate-pulse h-40 w-full bg-gray-100 dark:bg-gray-900"></div>}>
+                <ReferralProgram />
+              </Suspense>
+            </div>
+          )}
+          
+          {currentTab === 'settings' && (
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Account Settings</h1>
+              
+              {/* Profile settings */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 mb-6">
+                <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Profile Information</h2>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Full Name
+                    </label>
+                    <input
+                      type="text"
+                      id="name"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                      defaultValue={auth.user?.name}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Email Address
+                    </label>
+                    <input
+                      type="email"
+                      id="email"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                      defaultValue={auth.user?.email}
+                    />
+                  </div>
+                  
+                  <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md transition-colors">
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+              
+              {/* Password settings */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 mb-6">
+                <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Change Password</h2>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="current-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Current Password
+                    </label>
+                    <input
+                      type="password"
+                      id="current-password"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label htmlFor="new-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      New Password
+                    </label>
+                    <input
+                      type="password"
+                      id="new-password"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label htmlFor="confirm-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Confirm New Password
+                    </label>
+                    <input
+                      type="password"
+                      id="confirm-password"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                    />
+                  </div>
+                  
+                  <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md transition-colors">
+                    Update Password
+                  </button>
+                </div>
+              </div>
+              
+              {/* Preferences */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 mb-6">
+                <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Reading Preferences</h2>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="theme" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Default Theme
+                    </label>
+                    <select
+                      id="theme"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                      defaultValue="light"
+                    >
+                      <option value="light">Light</option>
+                      <option value="dark">Dark</option>
+                      <option value="sepia">Sepia</option>
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label htmlFor="font-size" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Font Size
+                    </label>
+                    <select
+                      id="font-size"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                      defaultValue="medium"
+                    >
+                      <option value="small">Small</option>
+                      <option value="medium">Medium</option>
+                      <option value="large">Large</option>
+                      <option value="x-large">Extra Large</option>
+                    </select>
+                  </div>
+                  
+                  <div className="flex items-center">
+                    <input
+                      id="notifications"
+                      type="checkbox"
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      defaultChecked
+                    />
+                    <label htmlFor="notifications" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
+                      Enable reading reminders
+                    </label>
+                  </div>
+                  
+                  <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md transition-colors">
+                    Save Preferences
+                  </button>
+                </div>
+              </div>
+              
+              {/* Subscription */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6">
+                <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Subscription</h2>
+                
+                {auth.user?.isPremium ? (
+                  <div>
+                    <div className="flex items-center mb-4">
+                      <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-amber-600 dark:text-amber-400 mr-3">
+                        <Crown size={20} />
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900 dark:text-white">
+                          {userProfile?.subscription?.plan_id === 'premium-annual' ? 'Premium Annual Plan' : 'Premium Monthly Plan'}
+                        </p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                          {userProfile?.subscription ? 
+                            `Your subscription ${userProfile.subscription.cancel_at_period_end ? 'will end' : 'renews'} on ${new Date(userProfile.subscription.current_period_end).toLocaleDateString()}` : 
+                            'Active subscription'}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {userProfile?.subscription?.cancel_at_period_end ? (
+                      <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 rounded-md mb-4 text-sm">
+                        Your subscription is set to cancel at the end of the current billing period. You will still have premium access until then.
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={handleCancelSubscription}
+                        disabled={isLoading}
+                        className="px-4 py-2 border border-red-600 text-red-600 font-medium rounded-md hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        {isLoading ? 'Processing...' : 'Cancel Subscription'}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <p className="text-gray-700 dark:text-gray-300 mb-4">
+                      Upgrade to Premium to unlock unlimited access to all books and exclusive features.
+                    </p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                      {subscriptionPlans.map((plan: SubscriptionPlan) => (
+                        <div 
+                          key={plan.id} 
+                          onClick={() => setSelectedPlan(plan.id)}
+                          className={`border rounded-lg p-4 cursor-pointer transition-all ${selectedPlan === plan.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700'}`}
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <h3 className="font-bold text-gray-900 dark:text-white">{plan.name}</h3>
+                              <p className="text-sm text-gray-500 dark:text-gray-400">{plan.description}</p>
+                            </div>
+                            {plan.is_popular && (
+                              <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-blue-900 dark:text-blue-300">
+                                Popular
+                              </span>
+                            )}
+                          </div>
+                          <div className="mb-2">
+                            <span className="text-2xl font-bold text-gray-900 dark:text-white">${plan.price}</span>
+                            <span className="text-gray-500 dark:text-gray-400">/{plan.interval}</span>
+                          </div>
+                          <ul className="space-y-1 mb-4 text-sm">
+                            {plan.features.map((feature: string, index: number) => (
+                              <li key={index} className="flex items-center">
+                                <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center mr-2">
+                                  <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                                <span>{feature}</span>
+                              </li>
+                            ))}
+                          </ul>
+                          <div className="flex items-center">
+                            <input 
+                              type="radio" 
+                              name="subscription-plan" 
+                              id={`plan-${plan.id}`} 
+                              checked={selectedPlan === plan.id} 
+                              onChange={() => setSelectedPlan(plan.id)} 
+                              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" 
+                            />
+                            <label htmlFor={`plan-${plan.id}`} className="ml-2 text-sm font-medium text-gray-900 dark:text-gray-300">
+                              Select plan
+                            </label>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    <button
+                      onClick={handleUpgradeToPremium}
+                      disabled={isLoading || !selectedPlan}
+                      className="w-full py-2 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-bold rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isLoading ? 'Processing...' : 'Upgrade Now'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default UserDashboardPage;
