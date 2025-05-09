@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # TextCentre
 
 A modern eBook and audiobook platform with AI-powered features.
@@ -58,3 +59,6 @@ Pull requests welcome! Please open an issue first.
 
 ## License
 [MIT](LICENSE)
+=======
+# textcentre
+>>>>>>> cdec986180762a6e170cc58a48c24193e0e0d080
